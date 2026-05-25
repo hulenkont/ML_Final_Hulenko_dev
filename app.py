@@ -377,67 +377,101 @@ elif st.session_state.current_step == "🔴 Прогноз (Forecast)":
     elif st.session_state.lat is None:
         st.warning("Спочатку завантажте локацію у вкладці 1.")
     else:
-        forecast_days = st.slider("Кількість днів для прогнозу", min_value=1, max_value=7, value=7)
+        forecast_days = st.slider("Кількість днів для прогнозу", min_value=1, max_value=30, value=14)
         
         if st.button("Отримати прогноз", type="primary"):
             with st.spinner("Отримання прогнозу..."):
                 start_f = date.today()
                 end_f = start_f + timedelta(days=forecast_days - 1)
+
+                url = "https://api.open-meteo.com/v1/forecast"
+                params = {
+                    "latitude": st.session_state.lat,
+                    "longitude": st.session_state.lon,
+                    "start_date": start_f.strftime("%Y-%m-%d"),
+                    "end_date": end_f.strftime("%Y-%m-%d"),
+                    "daily": [
+                        "temperature_2m_max", "temperature_2m_min", "temperature_2m_mean",
+                        "apparent_temperature_max", "apparent_temperature_min",
+                        "wind_speed_10m_max", "wind_gusts_10m_max", "wind_direction_10m_dominant",
+                        "shortwave_radiation_sum", "sunshine_duration", "daylight_duration",
+                        "et0_fao_evapotranspiration", "precipitation_sum"
+                    ],
+                    "timezone": "auto"
+                }
+
+                if forecast_days > 14:
+                    params["models"] = "ecmwf_ifs_long"
                 
-                df_forecast, missing_f = fetch_weather_data(st.session_state.lat, st.session_state.lon, start_f, end_f, is_forecast=True)
-                
-                if df_forecast is not None:
-                    df_features = engineer_features(df_forecast)
-                    X_forecast = df_features[st.session_state.feature_cols]
-                    
-                    model = st.session_state.best_model
-                    predictions = model.predict(X_forecast)
-                    probabilities = model.predict_proba(X_forecast)[:, 1]
-                    
-                    results_display = pd.DataFrame({
-                        "Дата": df_forecast['time'].dt.date,
-                        "Макс. Темп. (°C)": df_forecast['temperature_2m_max'],
-                        "Вітер (км/год)": df_forecast['wind_speed_10m_max'],
-                        "Очікуються опади?": ["🌧️ ТАК" if p == 1 else "☀️ НІ" for p in predictions],
-                        "Ймовірність опадів": [f"{prob*100:.1f}%" for prob in probabilities]
-                    })
-                    
-                    st.write("### Результат прогнозування")
-                    
-                    def color_rain(val):
-                        if 'ТАК' in str(val):
-                            return 'background-color: #d32f2f; color: white;' 
-                        elif 'НІ' in str(val):
-                            return 'background-color: #388e3c; color: white;'
-                        return ''
-                    
-                    st.dataframe(results_display.style.map(color_rain, subset=['Очікуються опади?']), use_container_width=True)
-                    
-                    st.write("### Візуалізація прогнозу")
-                    fig2 = go.Figure()
-                    
-                    fig2.add_trace(go.Bar(
-                        x=results_display['Дата'], y=probabilities * 100, name="Ймовірність опадів (%)",
-                        marker_color=['#1f77b4' if p == 1 else '#b0bec5' for p in predictions],
-                        opacity=0.85
-                    ))
-                    
-                    fig2.add_trace(go.Scatter(
-                        x=results_display['Дата'], y=results_display['Макс. Темп. (°C)'],
-                        mode='lines+markers', name='Температура (°C)', yaxis='y2', 
-                        line=dict(color='#d32f2f', width=2.5),
-                        marker=dict(size=8, symbol='square', line=dict(color='white', width=1))
-                    ))
-                    
-                    fig2.update_layout(
-                        title="Динаміка температури та ймовірності опадів",
-                        template="simple_white",
-                        yaxis=dict(title="Ймовірність (%)", range=[0, 105], showgrid=True, gridcolor="#a5a4a4"),
-                        yaxis2=dict(title="Температура (°C)", overlaying='y', side='right', showgrid=False),
-                        legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.9)', bordercolor='black', borderwidth=1),
-                        hovermode="x unified",
-                        margin=dict(l=40, r=40, t=50, b=40)
-                    )
-                    st.plotly_chart(fig2, use_container_width=True)
-                else:
-                    st.error("Помилка отримання даних прогнозу")
+                try:
+                    response = requests.get(url, params=params)
+                    if response.status_code == 200:
+                        data = response.json()
+                        
+                        # Перевіряємо, яка модель повернула дані (стандартна чи ecmwf_ifs_long)
+                        key = 'daily_ecmwf_ifs_long' if 'daily_ecmwf_ifs_long' in data else 'daily'
+                        
+                        if key in data:
+                            df_forecast = pd.DataFrame(data[key])
+                            df_forecast['time'] = pd.to_datetime(df_forecast['time'])
+                            
+                            df_features = engineer_features(df_forecast)
+                            X_forecast = df_features[st.session_state.feature_cols]
+                            
+                            model = st.session_state.best_model
+                            predictions = model.predict(X_forecast)
+                            probabilities = model.predict_proba(X_forecast)[:, 1]
+                            
+                            # ВСІ НАСТУПНІ БЛОКИ ТЕПЕР ПРАВИЛЬНО ПРИВ'ЯЗАНІ ДО НАЯВНОСТІ ДАНИХ У key
+                            results_display = pd.DataFrame({
+                                "Дата": df_forecast['time'].dt.date,
+                                "Макс. Темп. (°C)": df_forecast['temperature_2m_max'],
+                                "Вітер (км/год)": df_forecast['wind_speed_10m_max'],
+                                "Очікуються опади?": ["🌧️ ТАК" if p == 1 else "☀️ НІ" for p in predictions],
+                                "Ймовірність опадів": [f"{prob*100:.1f}%" for prob in probabilities]
+                            })
+                            
+                            st.write("### Результат прогнозування")
+                            
+                            def color_rain(val):
+                                if 'ТАК' in str(val):
+                                    return 'background-color: #d32f2f; color: white;' 
+                                elif 'НІ' in str(val):
+                                    return 'background-color: #388e3c; color: white;'
+                                return ''
+                            
+                            st.dataframe(results_display.style.map(color_rain, subset=['Очікуються опаidи?']), use_container_width=True)
+                            
+                            st.write("### 📊 Візуалізація прогнозу")
+                            fig2 = go.Figure()
+                            
+                            fig2.add_trace(go.Bar(
+                                x=results_display['Дата'], y=probabilities * 100, name="Ймовірність опадів (%)",
+                                marker_color=['#1f77b4' if p == 1 else '#b0bec5' for p in predictions],
+                                opacity=0.85
+                            ))
+                            
+                            fig2.add_trace(go.Scatter(
+                                x=results_display['Дата'], y=results_display['Макс. Темп. (°C)'],
+                                mode='lines+markers', name='Температура (°C)', yaxis='y2', 
+                                line=dict(color='#d32f2f', width=2.5),
+                                marker=dict(size=8, symbol='square', line=dict(color='white', width=1))
+                            ))
+                            
+                            fig2.update_layout(
+                                title="Динаміка температури та ймовірності опадів",
+                                template="simple_white",
+                                yaxis=dict(title="Ймовірність (%)", range=[0, 105], showgrid=True, gridcolor="#a5a4a4"),
+                                yaxis2=dict(title="Температура (°C)", overlaying='y', side='right', showgrid=False),
+                                legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.9)', bordercolor='black', borderwidth=1),
+                                hovermode="x unified",
+                                margin=dict(l=40, r=40, t=50, b=40)
+                            )
+                            st.plotly_chart(fig2, use_container_width=True)
+                            
+                        else:
+                            st.error("API не повернуло блок щоденних даних.")
+                    else:
+                        st.error(f"Помилка API Open-Meteo: статус {response.status_code}")
+                except Exception as e:
+                    st.error(f"Не вдалося виконати прогноз: {e}")
