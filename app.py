@@ -87,7 +87,7 @@ def engineer_features(df):
 # ДЛЯ ІНТЕРФЕЙСУ
 
 st.title("☔ Сервіс для прогнозування опадів")
-st.markdown("Проєкт виконав: Uradovskyi Anton, група ІДС-501.")
+st.markdown("Проєкт виконав: Гуленко Назар, група ІДС-501.")
 
 tab1, tab2, tab3 = st.tabs([
     "🔴 Завантаження даних (Load data)", 
