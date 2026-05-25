@@ -89,13 +89,9 @@ def engineer_features(df):
 st.title("☔ Сервіс для прогнозування опадів")
 st.markdown("Проєкт виконав: Гуленко Назар, група ІДС-501.")
 
-tab1, tab2, tab3 = st.tabs([
-    "🔴 Завантаження даних (Load data)", 
-    "🔴 Навчання ML моделі (ML model training)", 
-    "🔴 Прогноз (Forecast)"
-])
-
 # Збереження стану сесії
+if 'current_step' not in st.session_state:
+    st.session_state.current_step = "🔴 Завантаження даних (Load data)"
 if 'historical_df' not in st.session_state:
     st.session_state.historical_df = None
 if 'best_model' not in st.session_state:
@@ -109,9 +105,24 @@ if 'lat' not in st.session_state:
 if 'lon' not in st.session_state:
     st.session_state.lon = None
 
+# Створюємо список кроків
+steps = [
+    "🔴 Завантаження даних (Load data)", 
+    "🔴 Навчання ML моделі (ML model training)", 
+    "🔴 Прогноз (Forecast)"
+]
+
+# Навігація через бічну панель (Sidebar), прив'язана до стану сесії
+step = st.sidebar.radio("Навігація по проєкту:", steps, key="navigation_radio", 
+                        index=steps.index(st.session_state.current_step))
+
+# Оновлюємо стан відповідно до вибору користувача вручну
+st.session_state.current_step = step
+
+
 # 1.ОТРИМАННЯ ДАНИХ
 
-with tab1:
+if st.session_state.current_step == "🔴 Завантаження даних (Load data)":
     st.header("Отримання історичних метеоданих про погоду")
     
     col1, col2 = st.columns(2)
@@ -141,23 +152,23 @@ with tab1:
             
             st.session_state.lat = lat
             st.session_state.lon = lon
-            st.info(f"Координати: Широта {lat:.4f}, Довгота {lon:.4f}")
             
             df, missing_count = fetch_weather_data(lat, lon, start_d, end_d, is_forecast=False)
             
             if df is not None:
                 st.session_state.historical_df = df
-                if missing_count > 0:
-                    st.warning(f"⚠️ У сирих даних знайдено пропусків: {missing_count}. Алгоритм автоматично заповнив їх (інтерполяція).")
-                else:
-                    st.success("✅ Пропусків у даних не виявлено. Набір готовий до використання")
-                
-                st.success(f"✅ Успішно завантажено {len(df)} записів!")
                 
                 # Збереження у CSV форматі
                 file_name = 'weather_daily.csv'
                 df.to_csv(file_name, index=False)
-                st.info(f"Файл збережено: `{os.path.abspath(file_name)}`")
+                
+                # Повідомляємо про успіх
+                st.success(f"✅ Успішно завантажено {len(df)} записів та збережено у CSV!")
+                
+                # ЗМІНА СТАНУ ДЛЯ АВТОПЕРЕХОДУ
+                st.session_state.current_step = "🔴 Навчання ML моделі (ML model training)"
+                # Перезавантажуємо сторінку, щоб застосувати новий крок
+                st.rerun()
             else:
                 st.error("Помилка при завантаженні даних")
 
@@ -168,7 +179,7 @@ with tab1:
 
 # 2.МОДЕЛІ ТА КРОС-ВАЛІДАЦІЯ
 
-with tab2:
+elif st.session_state.current_step == "🔴 Навчання ML моделі (ML model training)":
     st.header("Навчання, підбір гіперпараметрів та оцінка")
     
     # Інформаційний блок про архітектуру розбиття
@@ -181,7 +192,7 @@ with tab2:
     """)
     
     if st.session_state.historical_df is None:
-        st.warning("Спочатку завантажте дані у вкладці 1.")
+        st.warning("Спочатку завантажте дані на першому кроці.")
     else:
         df = st.session_state.historical_df.copy()
         
@@ -194,7 +205,9 @@ with tab2:
         X = df.drop(columns=cols_to_drop)
         y = df['target']
         st.session_state.feature_cols = X.columns.tolist()
-        
+
+        # Використовуємо форму для того, щоб користувач міг запустити навчання, 
+        # а результати та кнопка переходу не зникали при натисканні
         if st.button("Запустити TimeSeries CV та навчання", type="primary"):
             with st.spinner("Виконується пошук оптимальних параметрів..."):
                 
@@ -279,47 +292,48 @@ with tab2:
                         best_name = name
                         best_pipeline = current_best_model
                         
+                # Зберігаємо все необхідне в сесію, щоб воно не зникло після перезапуску
                 st.session_state.best_model = best_pipeline
                 st.session_state.best_model_name = best_name
-                
-                # Збереження X_test та y_test для матриці плутанини
-                best_y_pred = best_pipeline.predict(X_test)
-                
-                # Вивід метрик
-                st.write("### 📊 Метрики на незалежній Test Set (Хронологічні останні 20%)")
-                st.markdown("*Порівняйте **CV F1-Score** та **Test F1-Score**. Якщо Test значно нижчий за CV — модель перенавчилась на історичних умовах.*")
-                
-                df_results = pd.DataFrame(results)
-                # Підсвічуємо стовпці з метриками
-                st.dataframe(df_results.style.highlight_max(
-                    subset=['CV F1-Score', 'Test F1-Score', 'Test Accuracy', 'Test Precision', 'Test Recall', 'Test ROC-AUC'], 
-                    color='lightgreen'), 
-                    use_container_width=True)
-                
-                st.success(f"Обрана модель: **{best_name}**")
-                
-                st.write("### ⚙️ Знайдені найкращі гіперпараметри")
-                for m_name, p in best_params_display.items():
-                    st.markdown(f"- **{m_name}:** {p}")
+                st.session_state.training_results = results
+                st.session_state.best_params_display = best_params_display
+                st.session_state.y_test = y_test
+                st.session_state.best_y_pred = best_pipeline.predict(X_test)
 
-                # Матриця плутанини
-                st.divider()
-                st.write(f"###Матриця помилок (Confusion Matrix) для {best_name}")
-                st.markdown("Показує розподіл правильних (по діагоналі) та хибних передбачень на тестовій вибірці.")
+                st.success(f"🎉 Навчання завершено! Найкраща модель: **{best_name}**")
                 
-                cm = confusion_matrix(y_test, best_y_pred)
-                fig_cm = px.imshow(cm, text_auto=True, color_continuous_scale='Blues',
-                                   labels=dict(x="Прогноз моделі", y="Фактично", color="Кількість"),
-                                   x=['Без опадів (0)', 'З опадами (1)'],
-                                   y=['Без опадів (0)', 'З опадами (1)'])
-                fig_cm.update_layout(xaxis_title="Прогноз моделі", yaxis_title="Фактично", font=dict(size=14))
-                st.plotly_chart(fig_cm, use_container_width=True)
+                # Дозволяємо відображення кнопки переходу
+                st.session_state.current_step = "🔴 Прогноз (Forecast)"
+                st.rerun()
 
-        # візуалізація того як відбирались ознаки
+        # Поза блоком кнопки перевіряємо, чи є вже навчена модель у сесії, 
+        # щоб відобразити результати минулого запуску
         if st.session_state.best_model is not None:
+            st.write("### 📊 Метрики на незалежній Test Set (Хронологічні останні 20%)")
+            df_results = pd.DataFrame(st.session_state.training_results)
+            st.dataframe(df_results.style.highlight_max(
+                subset=['CV F1-Score', 'Test F1-Score', 'Test Accuracy', 'Test Precision', 'Test Recall', 'Test ROC-AUC'], 
+                color='lightgreen'), 
+                use_container_width=True)
+            
+            st.write("### ⚙️ Знайдені найкращі гіперпараметри")
+            for m_name, p in st.session_state.best_params_display.items():
+                st.markdown(f"- **{m_name}:** {p}")
+
+            # Матриця помилок
+            st.divider()
+            st.write(f"### 🧮 Матриця помилок (Confusion Matrix) для {st.session_state.best_model_name}")
+            cm = confusion_matrix(st.session_state.y_test, st.session_state.best_y_pred)
+            fig_cm = px.imshow(cm, text_auto=True, color_continuous_scale='Blues',
+                               labels=dict(x="Прогноз моделі", y="Фактично", color="Кількість"),
+                               x=['Без опадів (0)', 'З опадами (1)'],
+                               y=['Без опадів (0)', 'З опадами (1)'])
+            fig_cm.update_layout(xaxis_title="Прогноз моделі", yaxis_title="Фактично", font=dict(size=14))
+            st.plotly_chart(fig_cm, use_container_width=True)
+
+            # Відбір ознак
             st.divider()
             st.write("### 🔍 Відбір ознак (Feature Selection)")
-            
             pipeline = st.session_state.best_model
             selector = pipeline.named_steps['feature_selection']
             classifier = pipeline.named_steps['classifier']
@@ -331,7 +345,7 @@ with tab2:
             
             c1, c2, c3 = st.columns(3)
             c1.metric("Всього ознак на вході", len(feature_names))
-            c2.metric("Відібрано алгоритмом для включення в модель", len(selected_features))
+            c2.metric("Відібрано алгоритмом", len(selected_features))
             c3.metric("Відкинуто", len(dropped_features))
             
             if len(dropped_features) > 0:
@@ -346,10 +360,16 @@ with tab2:
             feat_imp_df = pd.DataFrame({'Ознака': selected_features, 'Вплив на прогноз': importances}).sort_values(by='Вплив на прогноз', ascending=True)
             fig = px.bar(feat_imp_df, x='Вплив на прогноз', y='Ознака', orientation='h', color='Вплив на прогноз', color_continuous_scale='Viridis')
             st.plotly_chart(fig, use_container_width=True)
+            
+            # Якщо модель щойно навчилася — показуємо кнопку для переходу 
+            if st.session_state.get('just_trained', False):
+                st.session_state.just_trained = False # скидаємо прапорець
+                st.success("Перенаправлення на сторінку прогнозування...")
+                
 
 # 3.ПРОГНОЗУВАННЯ
 
-with tab3:
+elif st.session_state.current_step == "🔴 Прогноз (Forecast)":
     st.header("Прогноз опадів на наступні дні")
     
     if st.session_state.best_model is None:
