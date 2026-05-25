@@ -440,7 +440,7 @@ elif st.session_state.current_step == "🔴 Прогноз (Forecast)":
                                     return 'background-color: #388e3c; color: white;'
                                 return ''
                             
-                            st.dataframe(results_display.style.map(color_rain, subset=['Очікуються опаidи?']), use_container_width=True)
+                            st.dataframe(results_display.style.map(color_rain, subset=['Очікуються опади?']), use_container_width=True)
                             
                             st.write("### 📊 Візуалізація прогнозу")
                             fig2 = go.Figure()
